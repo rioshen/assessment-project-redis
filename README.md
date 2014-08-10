@@ -7,23 +7,20 @@ Written the report in such a way that the reader can understand the application,
 
 ### Introduction
 
-[REDIS](http://redis.io/) is an open source, advanced key-value store. It is often referred to as a data structure server since keys can contain strings, hashes, lists, sets and sorted sets. Redis is used in several important products and services such as:  [github](https://github.com/blog/530-how-we-made-github-fast), [stackoverflow](http://meta.stackoverflow.com/questions/69164/does-stackoverflow-use-caching-and-if-so-how/69172), [Disqus](http://redis.io/topics/whos-using-redis) and many more that you can from the [who is using](http://redis.io/topics/whos-using-redis) page. 
+Nowadays, companies in big data or real-time web applications, cannot wait for weeks to complete the definition of how they want to store their data. For example, if the users have twitter, GitHub, or Facebook data that the application wants to store with the traditional contract data. In a traditional relational database, we would need to preallocate all the fields that you need upfront. We can change our fields within a relational database but it may take an extreme amount of time to apply those changes to your database. This may cause downtime or loss of productivity. Because of this challenges, the NoSQL technology was created.
+
+NoSQL technology provides a mechanism include simplicity of design, horizontal scaling and finer control over availability. For different purposes, there are a few different types of NoSQL systems. One example is an in memory database. [REDIS](http://redis.io/) is an advanced key-value store, which is often referred to as a data structure server since keys can contains strings, hashes, lists, sets and sorted sets. It is used in several important products and services such as: [GitHub](https://github.com/blog/530-how-we-made-github-fast), [stackoverflow](http://meta.stackoverflow.com/questions/69164/does-stackoverflow-use-caching-and-if-so-how/69172), [Disqus](http://redis.io/topics/whos-using-redis) and many more that we can find from the [who is using](http://redis.io/topics/whos-using-redis) page. 
+
+Because of the popularity of Redis that it is used in a wide variety of applications, it is worth to analyze the security risk. For instance, compare to relational databases vulnerabilities, NoSQL databases are generally different as a result of their focus. Although the [website](http://redis.io/topics/security) of Redis will actually announce that it is only designed to be accessed from "trusted environment", it depends on what we want to use it for. So a standard application which only has one access level and the access can be restricted at an IP level, but a system which is designed for multiple users with multiple privileges to directly access the database would be problematic.
+
 
 ### Security Model
 
-Redis is designed to a component of back end infrastructure, this is part of Redis design philosophy. In the [Redis Manifesto](http://antirez.com/post/redis-manifesto.html) which has been written by the author [Salvatore Sanfilippo](http://invece.org/), in which he explains philosophy of his development. I quote particular the following:
-
-> We optimize for joy. We believe writing code is a lot of hard work, and the only way it can be worth is by enjoying it. When there is no longer joy in writing code, the best thing to do is stop. To prevent this, we’ll avoid taking paths that will make Redis less of a joy to develop.
-The
-
-
-##### General Security Model
-
-In the 
-
 > In general, Redis is not optimized for maximum security but for maximum performance and simplicity.
 
-It’s a simple solution to the problem of high-performance fast-changing data storage. However, its simplicity (combined with the incompetency of certain users) can easily become a detriment to security.
+In this section, I will first summarize the security model of Redis.
+
+##### 1. Security Model
 
 ##### Source Code Security Model
 
