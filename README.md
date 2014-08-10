@@ -72,7 +72,7 @@ Redis stores the password in the `redis.conf` file. By default, no authenticatio
 
 ![redis-server](./pics/no-auth.png)
 
-Redis has a weak password storage method - the password is set in clear text. It provides a huge opportunities for brute force attack. Below is the script that I use to do a brute force attack:
+Redis has a weak password storage method - the password is set in clear text and the `AUTH` command is not rate limited or restricted in any way. It provides a huge opportunities for brute force attack. An attacker could repeatedly issue the `AUTH` command until the correct password is identified. Below is the script that I use to do a brute force attack:
 
 ```python
 import redis
@@ -106,15 +106,21 @@ for password in p.generator():
 print "Success to crack the auth, password is {0}".format(rpwd)
 ```
 
-#### String Escaping and NoSQL Injection
+#### NoSQL Injection
 
+Redis uses a custom and simple query language to avoid classical NoSQL injection such as server-side JavaScript injection. Based on the , all legal strings are on the whitelist.
+```c
+struct redisCommand *commandTable;
+```
+In `redis.c`, the struct pointer `commandTable` contains all legal commands which is based on the [Redis Protocol](http://redis.io/topics/protocol), so Redis protocol has no concept of string escaping, so injection is impossible under normal circumstances using a normal client library. The protocol uses prefixed-length strings and is completely binary safe.
 
 
 ##### Source Code Security Model
 
-Redis is written in ANSI C and works in most POSIX systems like Linux, BSD, OS X and Solaris without external dependencies. From my limited point of view it’s code is simple and elegant to read. Codebase is not very big (about 20k LOC for 2.2 release).  
+Redis is written in ANSI C and works in most POSIX systems like Linux, BSD, OS X and Solaris without external dependencies. 
 
 In a classical Redis setup, clients are allowed full access to the command set, but accessing the instance should never result in the ability to control the system where Redis is running.
+
 Internally, Redis uses all the well known practices for writing secure code, to prevent buffer overflows, format bugs and other memory corruption issues. However, the ability to control the server configuration using the CONFIG command makes the client able to change the working dir of the program and the name of the dump file. This allows clients to write RDB Redis files at random paths, that is a security issue that may easily lead to the ability to run untrusted code as the same user as Redis is running.
 
 Redis does not requires root privileges to run. It is recommended to run it as an unprivileged redis user that is only used for this purpose. The Redis authors are currently investigating the possibility of adding a new configuration parameter to prevent CONFIG SET/GET dir and other similar run-time configuration directives. This would prevent clients from forcing the server to write Redis dump files at arbitrary locations.
