@@ -7,38 +7,32 @@ Written the report in such a way that the reader can understand the application,
 
 ### Introduction
 
-[REDIS](http://redis.io/) is an advanced key-value store, which is often referred to as a data structure server since keys can contains strings, hashes, lists, sets and sorted sets. As a technology, Redis continues to become popularity. It is used in several important products and services such as: [GitHub](https://github.com/blog/530-how-we-made-github-fast), [stackoverflow](http://meta.stackoverflow.com/questions/69164/does-stackoverflow-use-caching-and-if-so-how/69172), [Disqus](http://redis.io/topics/whos-using-redis) and many more that we can find from the [who is using](http://redis.io/topics/whos-using-redis) page. Social networks and real-time applications heavily rely on Redis. For example, Twitter makes heavy use of Redis, and has open-sourced some of the projects they built internally to take advantage of Redis. [Twemproxy](https://github.com/twitter/twemproxy) is a fast proxy for Redis that reduces the connection count on backend caching servers. 
+[REDIS](http://redis.io/) is an advanced key-value store, which is often referred to as a data structure server. As a technology, Redis continues to become popularity. It is used in several important products and services such as: [GitHub](https://github.com/blog/530-how-we-made-github-fast), [stackoverflow](http://meta.stackoverflow.com/questions/69164/does-stackoverflow-use-caching-and-if-so-how/69172), [Disqus](http://redis.io/topics/whos-using-redis) and many more that we can find from the [who is using](http://redis.io/topics/whos-using-redis) page. Social networks and real-time applications heavily rely on Redis. For example, Twitter makes heavy use of Redis, and has open-sourced some of the projects they built internally to take advantage of Redis. [Twemproxy](https://github.com/twitter/twemproxy) is a fast proxy for Redis that reduces the connection count on backend caching servers. 
 
 Because of the popularity of Redis that it is used in a wide variety of applications, it is worth to analyze the security risk. 
 
-For instance, compare to relational databases vulnerabilities, NoSQL databases are generally different as a result of their focus. Although the [website](http://redis.io/topics/security) of Redis will actually announce that it is only designed to be accessed from "trusted environment", it depends on what we want to use it for. So a standard application which only has one access level and the access can be restricted at an IP level, but a system which is designed for multiple users with multiple privileges to directly access the database would be problematic.
-
 ### How Redis Works
 
-Redis is a client/server system. A typical deployment diagram is the following:
+Redis is a client/server system. A common deployment diagram is the following:
 
 ![redis-server](./pics/deployment.jpg)
 
-Redis server is a process that accepts messages on the TCP protocol layer. **`redis-cli`** is the official client but also we can implement several flavors of languages for other external project such as: `C++`, `Python`, `Ruby` and `Java`. All the requests are managed with commands. Using a command table and according that what is read from sockets a command handler is invoked to perform desired action (this part will be explain further below).
+Redis server is a process that accepts messages on the TCP protocol layer. **`redis-cli`** is the official client but also we can implement several flavors of languages for other external project such as: `C++`, `Python`, `Ruby` and `Java`. 
+
+All the requests are managed with commands. Using a command table and according that what is read from sockets a command handler is invoked to perform desired action (this part will be explain further below).
 
 ### Security Model
 
-> Redis is designed to be accessed by trusted clients inside trusted environments.... In general, Redis is not optimized for maximum security but for maximum performance and simplicity...
-
-In this section, I will examine Redis in different aspects concerned with application security. 
 
 ### Code Security
 
-Redis is written in ANSI C. Most vulnerabilities in C are related to buffer overflows and string manipulation. Internally, Redis uses all the well known practices for writing secure code, to prevent buffer overflows, format bugs and other memory corruption issues. 
-
-
-Redis uses a
+Redis is written in ANSI C. Most vulnerabilities in C are related to buffer overflows and string manipulation. In this section I will first introduce some great practices that Redis uses to improve the security, from my limited point of view its implementations protect against such as buffer overflows, format bugs and other memory corruption issues is simple and elegant to read.
 
 #### *home-made* string library
 
-As mentioned before, most vulnerabilities in C are related to string manipulation. To avoid this problem, Redis implements itself string library in `sds.c` (sds stands for Simple Dynamic Strings) as a replacement of standard buit-in string library. 
+As mentioned before, most vulnerabilities in C are related to string manipulation. To avoid this problem, Redis implements private string library in `sds.c` (sds stands for Simple Dynamic Strings) as a replacement of standard buit-in string libraries. 
 
-For example, to avoid `strcat` vulnerability, Redis implements private version of `strcat`, named `sdscat` which will implicitly append the specified binary-safe string pointed by 't' of 'len' bytes to the * end of the specified sds string 's'.
+For example, to avoid `strcat` vulnerability, Redis implements private version of `strcat`, named `sdscat` which will implicitly check the length then appends the specified binary-safe string pointed by 't' of 'len' bytes to the * end of the specified sds string 's'.
 
 ```c
 sds sdscatlen(sds s, const void *t, size_t len) {
@@ -97,7 +91,7 @@ void *dictFetchValue(dict *d, const void *key) {
 ```
 In the file `dict.c`, if the command does not exist, it will return `NULL` and therefore deny to execute the command.
 
-#### Special Terminations
+#### Special Terminations Protection
 
 Unbounded string errors is also an important C vulnerability. To ensure binary safety, Redis defines a set of rules that regulate different data format:
 
@@ -108,7 +102,8 @@ Unbounded string errors is also an important C vulnerability. To ensure binary s
 
 #### Thread Safe
 
-At the root, Redis is a single-threaded server. This means that a single thread reads incoming connections using an event-based paradigm such as `epoll`, `kqueue` and `select`. When a specific event occurs on a file descriptor, it processes them and write back responses. Below UML sequence diagram shows how a command received by a client is processed internally in Redis:
+At the root, Redis is a single-threaded server, and the concurrency at the I/O level is using an I/O multiplexing mechanism and an event loop. This means that a single thread reads incoming connections using an event-based paradigm such as `epoll`, `kqueue` and `select`. All asynchronous I/O is supported by kernel thread pools and/or split-level drivers. When a specific event occurs on a file descriptor, it processes them and write back responses. Below UML sequence diagram shows how a command received by a client is processed internally in Redis:
+
 
 ![redis-server](./pics/thread-safe.jpg)
 
@@ -141,9 +136,75 @@ static void saveCommand(redisClient *c) {
 
 `addReply()` is used to push back responses to client.
 
-#### 1. Network Security
+### Source Code Security Assessment
 
-##### 1.1 Model
+In the last section, I introduced some good practices on Redis source code implementations. In this section I will conclude my effort on using static analysis tool to find a valuable security vulnerability.
+
+[Flawfinder](http://www.dwheeler.com/flawfinder/) is a static analysis tool that uses a database of known insecure C functions, to scan a program for any potential security issues. Compare to others, Flawfinder can find problems with race conditions and system calls. 
+
+After using Flawfinder to analyze Redis source code under `redis/src`, below is the summarization:
+
+```
+Hits = 678
+Lines analyzed = 47477 in 1.84 seconds (35527 lines/second)
+Physical Source Lines of Code (SLOC) = 32172
+Hits@level = [0]   0 [1] 181 [2] 461 [3]  14 [4]  21 [5]   1
+Hits@level+ = [0+] 678 [1+] 678 [2+] 497 [3+]  36 [4+]  22 [5+]   1
+Hits/KSLOC@level+ = [0+] 21.0742 [1+] 21.0742 [2+] 15.4482 [3+] 1.11899 [4+] 0.683824 [5+] 0.0310829
+Minimum risk level = 1
+Not every hit is necessarily a security vulnerability.
+There may be other security vulnerabilities; review your code!
+```
+
+Because Redis uses a *home-made* string library, flaws of string manipulation should be ignored.
+
+Two interesting flaws in the `rdb.c` seems caused by the same vulnerability - file operation:
+
+```
+rdb.c:641:  [2] (tmpfile) tmpfile:
+  Function tmpfile() has a security flaw on some systems (e.g., older
+  System V systems). 
+  
+rdb.c:642:  [2] (misc) fopen:
+  Check when opening files - can an attacker redirect it (via symlinks),
+  force the opening of special file type (e.g., device files), move
+  things around to create a race condition, control its ancestors, or change
+  its contents?. 
+```
+
+In the file `rdb.c` line 641, the function `rdbsave()` is showing as below:
+
+```c
+int rdbSave(char *filename) {
+    dictIterator *di = NULL;
+    dictEntry *de;**
+    char tmpfile[256];
+    char magic[10];
+    int j;
+    long long now = mstime();
+    FILE *fp;
+    rio rdb;
+    uint64_t cksum;
+
+    snprintf(tmpfile,256,"temp-%d.rdb", (int) getpid());
+    fp = fopen(tmpfile,"w");
+    if (!fp) {
+        redisLog(REDIS_WARNING, "Failed opening .rdb for saving: %s",
+            strerror(errno));
+        return REDIS_ERR;
+    }
+	...
+}
+```
+
+In `rdb.c` line 641, the function `rdbSave` does not use a security temporary file creation routine such as `mkstemp`.  According to the vulnerability of symbolic link file attack [1](https://www.owasp.org/index.php/Improper_temp_file_opening),  [2](https://www.owasp.org/index.php/Insecure_Temporary_File). This is vulnerable to a wide range of attacks which could result in overwriting (in line 693-695) and unlinking (in line 701) any file / hard link / symlink placed in `temp-PID.rdb` by an attacker. 
+
+The code should be creating the temporary file using some kind of safe function like `mkstemp`, `O_EXCL open`, etc. instead of just using a PID value which does not have enough entropy and protection from race conditions. It should also be sure it has set the CWD of itself to a known-safe location that should have permissions which are only open to the redis daemon / redis user and not to other users or processes.
+
+
+#### Network Security
+
+> Redis is designed to be accessed by trusted clients inside trusted environments.... In general, Redis is not optimized for maximum security but for maximum performance and simplicity...
 
 According to [Redis Protocol specification](http://redis.io/topics/protocol), Redis communication protocol is a simple plain-text mechanism. The redis server starts to run by creating a TCP connection to the port 6379.
 
@@ -151,11 +212,13 @@ According to [Redis Protocol specification](http://redis.io/topics/protocol), Re
 
 In the context of Redis the protocol is only used with TCP connections, offering no transport layer security. Because of this, all access to the Redis server port should be denied except for "trusted clients inside trusted environments". 
 
-Ideally Redis is deployed in firewall secured locations or listening so only on server processes can talk to them. With the drive of cloud based services its possible to assemble an application of any scale very quickly. 
+In this section I will first illustrate the serious results if the Redis server is installed and deployed as default. However, this is not a vulnerability or design flaw of Redis. I will discuss the reason to do this.
 
-##### 1.2 Vulnerabilities
+Below two sections I will do the Network Attack and Authentication Attack.
 
-By default, redis listens on all available IP addresses on port 6379, with no configuration required at all. No configuration by default is a normal state of NoSQL databases if you downloaded the software and installed it yourself. This is convenient for developers, however, sometimes in doing so developers may forget about the need for configuration.
+#### Network Attack
+
+By default, Redis listens on all available IP addresses on port 6379, with no configuration required at all. No configuration by default is a normal state of NoSQL databases if you downloaded the software and installed it yourself. This is convenient for developers, however, sometimes in doing so developers may forget about the need for configuration.
 
 Below is a scanning script I will use as a demonstration:
 
@@ -177,17 +240,15 @@ product_info = response['scan'][rhost]['tcp'][rport]
 if product_info['state'] == 'open':
     print "[-] Redis server is running on default port"
 ```
-In the file `redis.c`, line 
 I predict that by change the specific IP address from the localhost to any network and its sub-network (/24) ranges, this script can get a lot of misconfigured Redis server addresses. 
 
-##### 1.3 Suggestions
-In order to secure network security, we can bind the Redis server to a single interface by modifying the `redis.conf` file:
+Here is a great [post](https://codeinsecurity.wordpress.com/tag/redis/) which discussed and illustrates use a random scanning attack and found a lot of mis-configurated Redis server. I quote it below:
 
-```bash
-bind 127.0.0.1
-```
+>...I wrote up a quick script to scan random /24 ranges for Redis installations, and was amazed at the result. From a single day’s scanning, I found 48 open servers. What’s worse, two of them are major household-name websites – both of which were using Redis to store their page content. 
 
-#### Authentication Model
+>Obviously both of these companies have been contacted....It gets even worse, though. Redis allows you to send a DEBUG SEGFAULT command, which purposefully crashes the server. This means you can take down any Redis installation remotely...
+
+#### Authentication Attack
 
 Redis stores the password in the `redis.conf` file. By default, no authentication is required. To enable the authentication feature, we need to edit the `redis.conf` file. After that, Redis server will refuse any query by unauthenticated clients. 
 
@@ -227,120 +288,64 @@ for password in p.generator():
 print "Success to crack the auth, password is {0}".format(rpwd)
 ```
 
-#### NoSQL Injection
+Based on the weak authentication by default flaw of Redis, [Metasploit](http://www.rapid7.com/) has already released the [Redis Server Scanner Module](http://www.rapid7.com/db/modules/auxiliary/scanner/misc/redis_server). 
 
-Redis uses a custom and simple query language to avoid classical NoSQL injection such as server-side JavaScript injection. Based on the , all legal strings are on the whitelist.
-```c
-struct redisCommand *commandTable;
-```
-In `redis.c`, the struct pointer `commandTable` contains all legal commands which is based on the [Redis Protocol](http://redis.io/topics/protocol), so Redis protocol has no concept of string escaping, so injection is impossible under normal circumstances using a normal client library. The protocol uses prefixed-length strings and is completely binary safe.
+![redis-server](./pics/scanner.png)
 
+### Performance and Network Security
 
-##### Source Code Security Model
+Based on the design philosophy [Redis Manifesto](http://antirez.com/post/redis-manifesto.html) written by the author, anything will reduce the performance such as **Secure Authentication** and **Communication Encryption/Descryption** will be removed to insure the performance. This is because Redis is deigned as a back end data structure server, consider the cloud environment, all network security issues should be done by firewalls such as DMZ.
 
+Below is a graph on the performance comparison of Redis and MongoDB written operations:
 
+![redis-server](./pics/comparison.png)
 
-In a classical Redis setup, clients are allowed full access to the command set, but accessing the instance should never result in the ability to control the system where Redis is running.
+Below is a simple benchmark in Python I wrote to get the comparison result:
 
-Internally, Redis uses all the well known practices for writing secure code, to prevent buffer overflows, format bugs and other memory corruption issues. However, the ability to control the server configuration using the CONFIG command makes the client able to change the working dir of the program and the name of the dump file. This allows clients to write RDB Redis files at random paths, that is a security issue that may easily lead to the ability to run untrusted code as the same user as Redis is running.
+```python
+#!/usr/bin/env python2.7
+import sys, time
+from pymongo import Connection
+import redis
 
-Redis does not requires root privileges to run. It is recommended to run it as an unprivileged redis user that is only used for this purpose. The Redis authors are currently investigating the possibility of adding a new configuration parameter to prevent CONFIG SET/GET dir and other similar run-time configuration directives. This would prevent clients from forcing the server to write Redis dump files at arbitrary locations.
+# connect to redis & mongodb
+redis = redis.Redis()
+mongo = Connection().test
+collection = mongo['test']
+collection.ensure_index('key', unique=True)
 
-```c
-int rdbSave(char *filename) {
-    dictIterator *di = NULL;
-    dictEntry *de;**
-    char tmpfile[256];
-    char magic[10];
-    int j;
-    long long now = mstime();
-    FILE *fp;
-    rio rdb;
-    uint64_t cksum;
+def mongo_set(data):
+    for k, v in data.iteritems():
+        collection.insert({'key': k, 'value': v})
 
-    snprintf(tmpfile,256,"temp-%d.rdb", (int) getpid());
-    fp = fopen(tmpfile,"w");
-    if (!fp) {
-        redisLog(REDIS_WARNING, "Failed opening .rdb for saving: %s",
-            strerror(errno));
-        return REDIS_ERR;
-    }
+def redis_set(data):
+    for k, v in data.iteritems():
+        redis.set(k, v)
 
-    rioInitWithFile(&rdb,fp);
-    if (server.rdb_checksum)
-        rdb.update_cksum = rioGenericUpdateChecksum;
-    snprintf(magic,sizeof(magic),"REDIS%04d",REDIS_RDB_VERSION);
-    if (rdbWriteRaw(&rdb,magic,9) == -1) goto werr;
+def do_tests(num, tests):
+    # setup dict with key/values to retrieve
+    data = {'key' + str(i): 'val' + str(i)*100 for i in range(num)}
+    # run tests
+    for test in tests:
+        start = time.time()
+        test(data)
+        elapsed = time.time() - start
+        print "Completed %s: %d ops in %.2f seconds : %.1f ops/sec" % (test.__name__, num, elapsed, num / elapsed)
 
-    for (j = 0; j < server.dbnum; j++) {
-        redisDb *db = server.db+j;
-        dict *d = db->dict;
-        if (dictSize(d) == 0) continue;
-        di = dictGetSafeIterator(d);
-        if (!di) {
-            fclose(fp);
-            return REDIS_ERR;
-        }
+if __name__ == '__main__':
+    num = 1000 if len(sys.argv) == 1 else int(sys.argv[1])
+    tests = [mongo_set, redis_set] # order of tests is significant here!
+    do_tests(num, tests)
 ```
 
-In `rdb.c` line 641, the function `rdbSave` does not use a security temporary file creation
-routine such as `mkstemp`.  This is vulnerable to a wide range of attacks which
-could result in overwriting (in line 693-695) and unlinking (in line 701) any
-file / hard link / symlink placed in temp-PID.rdb by an attacker. The code should be creating the temporary file using some kind of safe function like `mkstemp`, `O_EXCL open`, etc. instead of just using a PID value which does not have enough entropy and protection from race conditions. It should also be sure it has set the CWD of itself to a known-safe location that should have permissions which are only open to the redis daemon / redis user
-and not to other users or processes.
-
-Reference [1](https://www.owasp.org/index.php/Improper_temp_file_opening),  [2](https://www.owasp.org/index.php/Insecure_Temporary_File)
-
-### References
-
-The Redis protocol is a simple plain-text mechanism,  This is a problem in itself, but it gets worse.  So, as you might imagine, quite a few of these servers end up facing the internet. So, I decided to see if I could find any. I wrote up a quick script to scan random /24 ranges for Redis installations, and was amazed at the result. From a single day’s scanning, I found 48 open servers. What’s worse, two of them are major household-name websites – both of which were using Redis to store their page content. Obviously both of these companies have been contacted.
-
-It gets even worse, though. Redis allows you to send a DEBUG SEGFAULT command, which purposefully crashes the server. This means you can take down any Redis installation remotely. Nasty stuff.
+And below is the result based on MongoDB 2.6.4 and Redis 2.9.999 and latest pymongo and redis-py:
 
 ```bash
-redis_version:2.4.5
-redis_git_sha1:00000000
-redis_git_dirty:0
-arch_bits:32
-multiplexing_api:winsock2
-process_id:####
-uptime_in_seconds:##########
-uptime_in_days:6
-lru_clock:##########
-used_cpu_sys:421.25
-used_cpu_user:466.63
-used_cpu_sys_children:6.48
-used_cpu_user_children:3.12
-connected_clients:16
-connected_slaves:0
-client_longest_output_list:0
-client_biggest_input_buf:0
-blocked_clients:0
-used_memory:680824356
-used_memory_human:664.87M
-used_memory_rss:680824356
-used_memory_peak:697004492
-used_memory_peak_human:680.67M
-mem_fragmentation_ratio:1.00
-mem_allocator:libc
-loading:0
-aof_enabled:0
-changes_since_last_save:6922
-bgsave_in_progress:0
-last_save_time:1326######
-bgrewriteaof_in_progress:0
-total_connections_received:802101
-total_commands_processed:3692083
-expired_keys:34652
-evicted_keys:2
-keyspace_hits:2763416
-keyspace_misses:591228
-pubsub_channels:0
-pubsub_patterns:0
-latest_fork_usec:0
-vm_enabled:0
-role:master
+$ ./cache_benchmark.py 10000
+Completed mongo_set: 10000 ops in 1.40 seconds : 7167.6 ops/sec
+Completed redis_set: 10000 ops in 0.78 seconds : 12752.6 ops/sec
 ```
 
-Update: The creator of Redis, antirez, responded to this post, informing me that you can in fact make Redis bind to a single IP in redis.conf. I’d like to clarify my point on the security of Redis – it is designed to be lightweight and provide only minimal security, so this problem is not a flaw of Redis itself. Instead, it’s a flaw of how people are using (or abusing) Redis. The current ethos is that you should always apply network security to your NoSQL systems – if you don’t, it’ll end in tears.
+Therefore, Redis must be deployed in firewall secured locations or listening so only on server processes can talk to them. With the drive of cloud based services its possible to assemble an application of any scale very quickly. 
 
+I would like to clarify my point on the network security of Redis – it is designed to be lightweight and provide only minimal security, so this problem is not a flaw of Redis itself. Instead, it is a flaw of how people are using (or abusing) Redis. The current ethos is that you should always apply network security to your NoSQL systems – if you don’t, it will end in tears.
