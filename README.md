@@ -11,7 +11,7 @@ Written the report in such a way that the reader can understand the application,
 
 Because of the popularity of Redis that it is used in a wide variety of applications, it is worth to analyze the security risk. 
 
-### How Redis Works
+### Work Flow of Redis
 
 Redis is a client/server system. A common deployment diagram is the following:
 
@@ -20,6 +20,105 @@ Redis is a client/server system. A common deployment diagram is the following:
 Redis server is a process that accepts messages on the TCP protocol layer. **`redis-cli`** is the official client but also we can implement several flavors of languages for other external project such as: `C++`, `Python`, `Ruby` and `Java`. 
 
 All the requests are managed with commands. Using a command table and according that what is read from sockets a command handler is invoked to perform desired action (this part will be explain further below).
+
+Starting Redis server is simple. The Redis server starts to run by creating a TCP connection to the port 6379.
+
+![redis-server](./pics/redis-server.png)
+
+Redis instance is made by a set of global variables and methods that access them. `main()` function which is in `redis.c` of Redis server is:
+
+![redis-server](./pics/work-flow.jpg)
+
+```c
+int main(int argc, char **argv) {
+
+	......
+	initServerConfig();
+	......
+	initServer();
+	......
+}
+```
+After reading the configuration file `redis.cnf`, `initServer()` is called. It will initialize all global variables of Redis. In particular, it creates a set of linked list for resource management. 
+
+```c
+void initServer() {
+	......
+	server.clients = listCreate();
+	server.slaves = listCreate();
+	server.monitors = listCreate();
+	server.objfreelist = listCreate();
+	......	
+}
+```
+
+Internally Redis use `dictionary` data structure for multiple purpose as the time complexity of dictionary is `O(1)`.
+
+```c
+......
+server.db[j].dict = dictCreate(&dbDictType,NULL);
+server.db[j].expires = dictCreate(&keyptrDictType,NULL);
+server.db[j].blockingkeys = dictCreate(&keylistDictType,NULL);
+......
+```
+
+After that, it initializes the event library which creates the event loop and the server socket. Then it enters the main loop for I/O message:
+
+```c
+void aeMain(aeEventLoop *eventLoop) {
+    eventLoop->stop = 0;
+	 while (!eventLoop->stop) {
+	 if (eventLoop->beforesleep != NULL)
+	 		eventLoop->beforesleep(eventLoop);
+			aeProcessEvents(eventLoop, AE_ALL_EVENTS);
+	  }
+}
+```
+
+### Unit Test in Redis
+
+Redis supports `tcl` scripts to do the unit test and automated test. Most the scripts are under the `tests` folder, the rest tests are embedded in the source code such as `ziplist.c` and `zipmap.c`.
+
+We can run the unit test suite by using the command `runtest`:
+
+```bash
+
+$ ./runtest --help
+    /usr/bin/tclsh8.5
+    --valgrind         Run the test over valgrind.
+    --accurate         Run slow randomized tests for more iterations.
+    --quiet            Don't show individual tests.
+    --single <unit>    Just execute the specified unit (see next option).
+    --list-tests       List all the available test units.
+    --clients <num>    Number of test clients (16).
+    --force-failure    Force the execution of a test that always fails.
+    --help             Print this help screen.
+```
+```bash    
+$ ./runtest --list-tests
+  /usr/bin/tclsh8.5
+  unit/printver
+......
+```
+```bash
+
+$ ./runtest --single unit/printver
+    /usr/bin/tclsh8.5
+    Cleanup: may take some time... OK
+    Starting test server at port 11111
+        
+    Testing unit/printver
+        
+    ... ...
+        
+    Execution time of different units:
+      0 seconds - unit/printver
+        
+      \o/ All tests passed without errors!
+        
+        Cleanup: may take some time... OK
+```
+
 
 ### Security Model
 
@@ -206,9 +305,7 @@ The code should be creating the temporary file using some kind of safe function 
 
 > Redis is designed to be accessed by trusted clients inside trusted environments.... In general, Redis is not optimized for maximum security but for maximum performance and simplicity...
 
-According to [Redis Protocol specification](http://redis.io/topics/protocol), Redis communication protocol is a simple plain-text mechanism. The redis server starts to run by creating a TCP connection to the port 6379.
-
-![redis-server](./pics/redis-server.png)
+According to [Redis Protocol specification](http://redis.io/topics/protocol), Redis communication protocol is a simple plain-text mechanism. 
 
 In the context of Redis the protocol is only used with TCP connections, offering no transport layer security. Because of this, all access to the Redis server port should be denied except for "trusted clients inside trusted environments". 
 
