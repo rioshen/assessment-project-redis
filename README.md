@@ -7,18 +7,139 @@ Written the report in such a way that the reader can understand the application,
 
 ### Introduction
 
-Nowadays, companies in big data or real-time web applications, cannot wait for weeks to complete the definition of how they want to store their data. For example, if the users have twitter, GitHub, or Facebook data that the application wants to store with the traditional contract data. In a traditional relational database, we would need to preallocate all the fields that you need upfront. We can change our fields within a relational database but it may take an extreme amount of time to apply those changes to your database. This may cause downtime or loss of productivity. Because of this challenges, the NoSQL technology was created.
+[REDIS](http://redis.io/) is an advanced key-value store, which is often referred to as a data structure server since keys can contains strings, hashes, lists, sets and sorted sets. As a technology, Redis continues to become popularity. It is used in several important products and services such as: [GitHub](https://github.com/blog/530-how-we-made-github-fast), [stackoverflow](http://meta.stackoverflow.com/questions/69164/does-stackoverflow-use-caching-and-if-so-how/69172), [Disqus](http://redis.io/topics/whos-using-redis) and many more that we can find from the [who is using](http://redis.io/topics/whos-using-redis) page. Social networks and real-time applications heavily rely on Redis. For example, Twitter makes heavy use of Redis, and has open-sourced some of the projects they built internally to take advantage of Redis. [Twemproxy](https://github.com/twitter/twemproxy) is a fast proxy for Redis that reduces the connection count on backend caching servers. 
 
-NoSQL technology provides a mechanism include simplicity of design, horizontal scaling and finer control over availability. For different purposes, there are a few different types of NoSQL systems. One example is an in memory database. [REDIS](http://redis.io/) is an advanced key-value store, which is often referred to as a data structure server since keys can contains strings, hashes, lists, sets and sorted sets. It is used in several important products and services such as: [GitHub](https://github.com/blog/530-how-we-made-github-fast), [stackoverflow](http://meta.stackoverflow.com/questions/69164/does-stackoverflow-use-caching-and-if-so-how/69172), [Disqus](http://redis.io/topics/whos-using-redis) and many more that we can find from the [who is using](http://redis.io/topics/whos-using-redis) page. 
+Because of the popularity of Redis that it is used in a wide variety of applications, it is worth to analyze the security risk. 
 
-Because of the popularity of Redis that it is used in a wide variety of applications, it is worth to analyze the security risk. For instance, compare to relational databases vulnerabilities, NoSQL databases are generally different as a result of their focus. Although the [website](http://redis.io/topics/security) of Redis will actually announce that it is only designed to be accessed from "trusted environment", it depends on what we want to use it for. So a standard application which only has one access level and the access can be restricted at an IP level, but a system which is designed for multiple users with multiple privileges to directly access the database would be problematic.
+For instance, compare to relational databases vulnerabilities, NoSQL databases are generally different as a result of their focus. Although the [website](http://redis.io/topics/security) of Redis will actually announce that it is only designed to be accessed from "trusted environment", it depends on what we want to use it for. So a standard application which only has one access level and the access can be restricted at an IP level, but a system which is designed for multiple users with multiple privileges to directly access the database would be problematic.
 
+### How Redis Works
+
+Redis is a client/server system. A typical deployment diagram is the following:
+
+![redis-server](./pics/deployment.jpg)
+
+Redis server is a process that accepts messages on the TCP protocol layer. **`redis-cli`** is the official client but also we can implement several flavors of languages for other external project such as: `C++`, `Python`, `Ruby` and `Java`. All the requests are managed with commands. Using a command table and according that what is read from sockets a command handler is invoked to perform desired action (this part will be explain further below).
 
 ### Security Model
 
 > Redis is designed to be accessed by trusted clients inside trusted environments.... In general, Redis is not optimized for maximum security but for maximum performance and simplicity...
 
 In this section, I will examine Redis in different aspects concerned with application security. 
+
+### Code Security
+
+Redis is written in ANSI C. Most vulnerabilities in C are related to buffer overflows and string manipulation. Internally, Redis uses all the well known practices for writing secure code, to prevent buffer overflows, format bugs and other memory corruption issues. 
+
+
+Redis uses a
+
+#### *home-made* string library
+
+As mentioned before, most vulnerabilities in C are related to string manipulation. To avoid this problem, Redis implements itself string library in `sds.c` (sds stands for Simple Dynamic Strings) as a replacement of standard buit-in string library. 
+
+For example, to avoid `strcat` vulnerability, Redis implements private version of `strcat`, named `sdscat` which will implicitly append the specified binary-safe string pointed by 't' of 'len' bytes to the * end of the specified sds string 's'.
+
+```c
+sds sdscatlen(sds s, const void *t, size_t len) {
+    struct sdshdr *sh;
+    size_t curlen = sdslen(s);
+
+    s = sdsMakeRoomFor(s,len);
+    if (s == NULL) return NULL;
+    sh = (void*) (s-(sizeof(struct sdshdr)));
+    memcpy(s+curlen, t, len);
+    sh->len = curlen+len;
+    sh->free = sh->free-len;
+    s[curlen+len] = '\0';
+    return s;
+}
+```
+
+All user can affected input validation has been done as the following:
+
+```c
+static void repl() {
+	while((line = linenoise(context ? config.prompt : "not connected> ")) != NULL) {
+        if (line[0] != '\0') {
+            argv = sdssplitargs(line,&argc);
+            if (history) linenoiseHistoryAdd(line);
+            if (historyfile) linenoiseHistorySave(historyfile);
+}
+``` 
+
+#### White List Command Table
+
+Redis uses a command table to interpret every command from the protocol and to execute an appropriate action. Command table defines all validate commands, anything else will be drop. 
+
+A command table is defined in `redis.c` as the following:
+
+```C
+struct redisCommand redisCommandTable[] = {
+    {"get",getCommand,2,"r",0,NULL,1,1,1,0,0},
+    {"set",setCommand,-3,"wm",0,NULL,1,1,1,0,0},
+	...
+    {"incr",incrCommand,2,"wm",0,NULL,1,1,1,0,0},
+    {"decr",decrCommand,2,"wm",0,NULL,1,1,1,0,0},
+    ...
+}
+```
+
+While handling user input commands, `lookupCommand()` will fetch the command from the dictionary like data structure.
+
+```c
+void *dictFetchValue(dict *d, const void *key) {
+    dictEntry *he;
+
+    he = dictFind(d,key);
+    return he ? dictGetVal(he) : NULL;
+}
+```
+In the file `dict.c`, if the command does not exist, it will return `NULL` and therefore deny to execute the command.
+
+#### Special Terminations
+
+Unbounded string errors is also an important C vulnerability. To ensure binary safety, Redis defines a set of rules that regulate different data format:
+
++ Simple Strings: a plus `+` character, followed by a string that cannot contain a `CR` or `LF` character (no newlines are allowed), terminated by `CRLF` (that is `"\r\n"`). 
++ Protocol Errors: exactly like simple strings but the first character is a minus `-` character instead of a plus.
++ Integers:  a `CRLF` terminated string representing an integer, prefixed by a ":" byte. 
++ Bulk Strings: A "$" byte followed by the number of bytes composing the string (a prefixed length), terminated by `CRLF` with the actual string data and a final `CRLF`.
+
+#### Thread Safe
+
+At the root, Redis is a single-threaded server. This means that a single thread reads incoming connections using an event-based paradigm such as `epoll`, `kqueue` and `select`. When a specific event occurs on a file descriptor, it processes them and write back responses. Below UML sequence diagram shows how a command received by a client is processed internally in Redis:
+
+![redis-server](./pics/thread-safe.jpg)
+
+
+To provide thread safe, Redis use an *home-made* event library include, `ae.c`, `ae_poll.c`, `ae_evport.c` and `ae_kqueue.c`. Central object is the `eventLoop` which contains events that has been invoked according to socket I/O. `aeApiPoll` polls all the socket descriptors to see if there is network activity. In the `aeProcessEvents()` all fired events are checked and the appropriate handler is invoked. A command table mentioned before as belowing:
+
+```c
+struct redisCommand redisCommandTable[] = {
+    {"get",getCommand,2,"r",0,NULL,1,1,1,0,0},
+    {"set",setCommand,-3,"wm",0,NULL,1,1,1,0,0},
+    ...
+}
+```
+
+The second parameter of this structure (`getCommand`) is the name of the method to invoke. For example a `setCommand()` is implemented as following:
+
+```c
+static void saveCommand(redisClient *c) {
+	    if (server.bgsavechildpid != -1) {
+	        addReplySds(c,sdsnew("-ERR background save in progress\r\n"));
+	        return;
+	    }
+	    if (rdbSave(server.dbfilename) == REDIS_OK) {
+	        addReply(c,shared.ok);
+	    } else {
+	        addReply(c,shared.err);
+	    }
+	}
+```
+
+`addReply()` is used to push back responses to client.
 
 #### 1. Network Security
 
@@ -56,7 +177,7 @@ product_info = response['scan'][rhost]['tcp'][rport]
 if product_info['state'] == 'open':
     print "[-] Redis server is running on default port"
 ```
-
+In the file `redis.c`, line 
 I predict that by change the specific IP address from the localhost to any network and its sub-network (/24) ranges, this script can get a lot of misconfigured Redis server addresses. 
 
 ##### 1.3 Suggestions
@@ -117,7 +238,7 @@ In `redis.c`, the struct pointer `commandTable` contains all legal commands whic
 
 ##### Source Code Security Model
 
-Redis is written in ANSI C and works in most POSIX systems like Linux, BSD, OS X and Solaris without external dependencies. 
+
 
 In a classical Redis setup, clients are allowed full access to the command set, but accessing the instance should never result in the ability to control the system where Redis is running.
 
