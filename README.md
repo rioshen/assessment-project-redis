@@ -119,11 +119,7 @@ $ ./runtest --single unit/printver
         Cleanup: may take some time... OK
 ```
 
-
-### Security Model
-
-
-### Code Security
+### Code Security Assessment
 
 Redis is written in ANSI C. Most vulnerabilities in C are related to buffer overflows and string manipulation. In this section I will first introduce some great practices that Redis uses to improve the security, from my limited point of view its implementations protect against such as buffer overflows, format bugs and other memory corruption issues is simple and elegant to read.
 
@@ -203,9 +199,7 @@ Unbounded string errors is also an important C vulnerability. To ensure binary s
 
 At the root, Redis is a single-threaded server, and the concurrency at the I/O level is using an I/O multiplexing mechanism and an event loop. This means that a single thread reads incoming connections using an event-based paradigm such as `epoll`, `kqueue` and `select`. All asynchronous I/O is supported by kernel thread pools and/or split-level drivers. When a specific event occurs on a file descriptor, it processes them and write back responses. Below UML sequence diagram shows how a command received by a client is processed internally in Redis:
 
-
 ![redis-server](./pics/thread-safe.jpg)
-
 
 To provide thread safe, Redis use an *home-made* event library include, `ae.c`, `ae_poll.c`, `ae_evport.c` and `ae_kqueue.c`. Central object is the `eventLoop` which contains events that has been invoked according to socket I/O. `aeApiPoll` polls all the socket descriptors to see if there is network activity. In the `aeProcessEvents()` all fired events are checked and the appropriate handler is invoked. A command table mentioned before as belowing:
 
@@ -301,7 +295,7 @@ In `rdb.c` line 641, the function `rdbSave` does not use a security temporary fi
 The code should be creating the temporary file using some kind of safe function like `mkstemp`, `O_EXCL open`, etc. instead of just using a PID value which does not have enough entropy and protection from race conditions. It should also be sure it has set the CWD of itself to a known-safe location that should have permissions which are only open to the redis daemon / redis user and not to other users or processes.
 
 
-#### Network Security
+#### Network Security Assessment
 
 > Redis is designed to be accessed by trusted clients inside trusted environments.... In general, Redis is not optimized for maximum security but for maximum performance and simplicity...
 
